@@ -194,7 +194,7 @@ export function RegionalRecommendation({
               <Input
                 id="county"
                 type="text"
-                placeholder="Enter county name (e.g., Kiambu, Nakuru, Meru)"
+                placeholder="Enter county name (e.g., Kajiado, Nakuru, Meru)"
                 value={formData.county}
                 onChange={(e) => handleInputChange("county", e.target.value)}
                 className="border-green-300 focus:border-green-500"
