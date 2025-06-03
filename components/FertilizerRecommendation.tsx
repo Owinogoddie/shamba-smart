@@ -1,5 +1,5 @@
 import * as React from "react";
-import { ArrowLeft, Sprout, Loader2, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Sprout, Loader2, AlertTriangle, Leaf } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -36,6 +36,27 @@ interface PredictionResult {
   validation_warnings: string[];
 }
 
+interface OrganicFertilizerResult {
+  predicted_rate_tons_per_acre: number;
+  confidence_interval: {
+    lower: number;
+    upper: number;
+    std: number;
+  };
+  model_performance: {
+    test_r2: number;
+    test_rmse: number;
+    test_mae: number;
+  };
+  input_parameters: {
+    nitrogen_percent: number;
+    phosphorus_ppm: number;
+    potassium_meq_percent: number;
+    soil_ph: number;
+  };
+  validation_warnings: string[];
+}
+
 export function FertilizerRecommendation({
   onBack,
 }: FertilizerRecommendationProps) {
@@ -49,12 +70,15 @@ export function FertilizerRecommendation({
 
   const [isLoading, setIsLoading] = React.useState(false);
   const [result, setResult] = React.useState<PredictionResult | null>(null);
+  const [organicResult, setOrganicResult] =
+    React.useState<OrganicFertilizerResult | null>(null);
   const [error, setError] = React.useState<string | null>(null);
 
   const handleInputChange = (field: string, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
     // Clear previous results when input changes
     if (result) setResult(null);
+    if (organicResult) setOrganicResult(null);
     if (error) setError(null);
   };
 
@@ -90,39 +114,70 @@ export function FertilizerRecommendation({
     setIsLoading(true);
     setError(null);
     setResult(null);
+    setOrganicResult(null);
 
     try {
-      const requestBody = {
+      const baseRequestBody = {
         nitrogen_percent: parseFloat(formData.nitrogen),
         phosphorus_ppm: parseFloat(formData.phosphorus),
         soil_ph: parseFloat(formData.soilPh),
         potassium_meq_percent: parseFloat(formData.potassium),
+      };
+
+      const fertilizerRequestBody = {
+        ...baseRequestBody,
         crop: formData.crop.trim().toLowerCase(),
       };
 
-      const response = await fetch(
-        "https://godfreyowino-smart-fertilizer-recommender.hf.space/predict",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(requestBody),
-        }
-      );
+      // Make both API calls simultaneously
+      const [fertilizerResponse, organicResponse] = await Promise.all([
+        fetch(
+          "https://godfreyowino-smart-fertilizer-recommender.hf.space/predict",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(fertilizerRequestBody),
+          }
+        ),
+        fetch(
+          "https://godfreyowino-organic-fertilizer-predictor.hf.space/predict",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(baseRequestBody),
+          }
+        ),
+      ]);
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+      if (!fertilizerResponse.ok) {
+        throw new Error(
+          `Fertilizer API error! status: ${fertilizerResponse.status}`
+        );
       }
 
-      const data: PredictionResult = await response.json();
-      setResult(data);
+      if (!organicResponse.ok) {
+        throw new Error(
+          `Organic fertilizer API error! status: ${organicResponse.status}`
+        );
+      }
+
+      const [fertilizerData, organicData] = await Promise.all([
+        fertilizerResponse.json() as Promise<PredictionResult>,
+        organicResponse.json() as Promise<OrganicFertilizerResult>,
+      ]);
+
+      setResult(fertilizerData);
+      setOrganicResult(organicData);
     } catch (err) {
       console.error("Prediction error:", err);
       setError(
         err instanceof Error
           ? err.message
-          : "Failed to get fertilizer recommendation. Please try again."
+          : "Failed to get fertilizer recommendations. Please try again."
       );
     } finally {
       setIsLoading(false);
@@ -138,6 +193,7 @@ export function FertilizerRecommendation({
       crop: "",
     });
     setResult(null);
+    setOrganicResult(null);
     setError(null);
   };
 
@@ -153,8 +209,22 @@ export function FertilizerRecommendation({
     return "destructive";
   };
 
+  // const getConfidenceRating = (
+  //   rate: number,
+  //   interval: { lower: number; upper: number }
+  // ) => {
+  //   const range = interval.upper - interval.lower;
+  //   const relativeUncertainty = range / rate;
+
+  //   if (relativeUncertainty < 0.5)
+  //     return { rating: "High", variant: "default" as const };
+  //   if (relativeUncertainty < 1.0)
+  //     return { rating: "Medium", variant: "secondary" as const };
+  //   return { rating: "Low", variant: "destructive" as const };
+  // };
+
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
+    <div className="max-w-4xl mx-auto space-y-6">
       <div className="flex items-center gap-4">
         <Button
           variant="outline"
@@ -170,10 +240,10 @@ export function FertilizerRecommendation({
           </div>
           <div>
             <h1 className="text-2xl font-bold text-green-800">
-              Fertilizer Recommendation
+              Fertilizer Recommendations
             </h1>
             <p className="text-green-600">
-              Get personalized fertilizer recommendations for your crops
+              Get both conventional and organic fertilizer recommendations
             </p>
           </div>
         </div>
@@ -184,12 +254,12 @@ export function FertilizerRecommendation({
           <div className="flex items-center gap-2">
             <Sprout className="h-5 w-5 text-green-600" />
             <CardTitle className="text-green-800">
-              Fertilizer Recommendation
+              Fertilizer Recommendations
             </CardTitle>
           </div>
           <CardDescription className="text-green-600">
-            Get personalized fertilizer recommendations based on soil and crop
-            data
+            Get personalized conventional and organic fertilizer recommendations
+            based on soil and crop data
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -301,13 +371,13 @@ export function FertilizerRecommendation({
                 {isLoading ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Getting Recommendation...
+                    Getting Recommendations...
                   </>
                 ) : (
-                  "Get Fertilizer Recommendation"
+                  "Get Fertilizer Recommendations"
                 )}
               </Button>
-              {(result || error) && (
+              {(result || organicResult || error) && (
                 <Button
                   type="button"
                   variant="outline"
@@ -323,102 +393,201 @@ export function FertilizerRecommendation({
         </CardContent>
       </Card>
 
-      {result && (
-        <Card className="bg-green-50/80 backdrop-blur-sm border-green-200">
-          <CardHeader>
-            <CardTitle className="text-green-800 flex items-center gap-2">
-              <Sprout className="h-5 w-5" />
-              Fertilizer Recommendation
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {/* Validation Warnings */}
-            {result.validation_warnings.length > 0 && (
-              <Alert className="border-yellow-200 bg-yellow-50">
-                <AlertTriangle className="h-4 w-4 text-yellow-600" />
-                <AlertDescription className="text-yellow-700">
-                  <div className="font-medium mb-1">Validation Warnings:</div>
-                  <ul className="list-disc list-inside space-y-1">
-                    {result.validation_warnings.map((warning, index) => (
-                      <li key={index}>{warning}</li>
-                    ))}
-                  </ul>
-                </AlertDescription>
-              </Alert>
-            )}
+      {/* Results Grid */}
+      {(result || organicResult) && (
+        <div className="grid gap-6 md:grid-cols-2">
+          {/* Conventional Fertilizer Recommendations */}
+          {result && (
+            <Card className="bg-green-50/80 backdrop-blur-sm border-green-200">
+              <CardHeader>
+                <CardTitle className="text-green-800 flex items-center gap-2">
+                  <Sprout className="h-5 w-5" />
+                  Conventional Fertilizer
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Validation Warnings */}
+                {result.validation_warnings.length > 0 && (
+                  <Alert className="border-yellow-200 bg-yellow-50">
+                    <AlertTriangle className="h-4 w-4 text-yellow-600" />
+                    <AlertDescription className="text-yellow-700">
+                      <div className="font-medium mb-1">
+                        Validation Warnings:
+                      </div>
+                      <ul className="list-disc list-inside space-y-1">
+                        {result.validation_warnings.map((warning, index) => (
+                          <li key={index}>{warning}</li>
+                        ))}
+                      </ul>
+                    </AlertDescription>
+                  </Alert>
+                )}
 
-            {/* Primary Recommendation */}
-            <div className="text-center p-4 bg-white rounded-lg border border-green-200">
-              <div className="text-2xl font-bold text-green-800 mb-2">
-                {result.primary_recommendation}
-              </div>
-              <div className="text-green-600 mb-3">Primary Recommendation</div>
-              <Badge
-                variant={getConfidenceBadgeVariant(result.confidence)}
-                className="text-sm"
-              >
-                {result.confidence}% Confidence
-              </Badge>
-            </div>
-
-            {/* All Recommendations */}
-            <div>
-              <h4 className="font-semibold text-green-800 mb-3">
-                All Recommendations:
-              </h4>
-              <div className="space-y-3">
-                {result.all_recommendations.map((rec, index) => (
-                  <div
-                    key={index}
-                    className="bg-white p-3 rounded-lg border border-green-100"
+                {/* Primary Recommendation */}
+                <div className="text-center p-4 bg-white rounded-lg border border-green-200">
+                  <div className="text-xl font-bold text-green-800 mb-2">
+                    {result.primary_recommendation}
+                  </div>
+                  <div className="text-green-600 mb-3">
+                    Primary Recommendation
+                  </div>
+                  <Badge
+                    variant={getConfidenceBadgeVariant(result.confidence)}
+                    className="text-sm"
                   >
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-medium text-green-800">
-                        {rec.fertilizer}
-                      </span>
-                      <Badge variant="outline" className="text-xs">
-                        {rec.confidence}%
-                      </Badge>
+                    {result.confidence}% Confidence
+                  </Badge>
+                </div>
+
+                {/* All Recommendations */}
+                <div>
+                  <h4 className="font-semibold text-green-800 mb-3">
+                    All Recommendations:
+                  </h4>
+                  <div className="space-y-2">
+                    {result.all_recommendations
+                      .slice(0, 3)
+                      .map((rec, index) => (
+                        <div
+                          key={index}
+                          className="bg-white p-3 rounded-lg border border-green-100"
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="font-medium text-green-800 text-sm">
+                              {rec.fertilizer}
+                            </span>
+                            <Badge variant="outline" className="text-xs">
+                              {rec.confidence}%
+                            </Badge>
+                          </div>
+                          <div className="w-full bg-gray-200 rounded-full h-1.5">
+                            <div
+                              className={`h-1.5 rounded-full ${getConfidenceColor(
+                                rec.confidence
+                              )}`}
+                              style={{ width: `${rec.confidence}%` }}
+                            ></div>
+                          </div>
+                        </div>
+                      ))}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Organic Fertilizer Recommendations */}
+          {organicResult && (
+            <Card className="bg-amber-50/80 backdrop-blur-sm border-amber-200">
+              <CardHeader>
+                <CardTitle className="text-amber-800 flex items-center gap-2">
+                  <Leaf className="h-5 w-5" />
+                  Organic Fertilizer
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {/* Validation Warnings */}
+                {organicResult.validation_warnings.length > 0 && (
+                  <Alert className="border-yellow-200 bg-yellow-50">
+                    <AlertTriangle className="h-4 w-4 text-yellow-600" />
+                    <AlertDescription className="text-yellow-700">
+                      <div className="font-medium mb-1">
+                        Validation Warnings:
+                      </div>
+                      <ul className="list-disc list-inside space-y-1">
+                        {organicResult.validation_warnings.map(
+                          (warning, index) => (
+                            <li key={index}>{warning}</li>
+                          )
+                        )}
+                      </ul>
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                {/* Application Rate */}
+                <div className="text-center p-4 bg-white rounded-lg border border-amber-200">
+                  <div className="text-2xl font-bold text-amber-800 mb-2">
+                    {organicResult.predicted_rate_tons_per_acre.toFixed(2)}{" "}
+                    tons/acre
+                  </div>
+                  <div className="text-amber-600 mb-3">
+                    Recommended Application Rate
+                  </div>
+                  {/* <Badge
+                    variant={
+                      getConfidenceRating(
+                        organicResult.predicted_rate_tons_per_acre,
+                        organicResult.confidence_interval
+                      ).variant
+                    }
+                    className="text-sm"
+                  >
+                    {
+                      getConfidenceRating(
+                        organicResult.predicted_rate_tons_per_acre,
+                        organicResult.confidence_interval
+                      ).rating
+                    }{" "}
+                    Confidence
+                  </Badge> */}
+                </div>
+
+                {/* Confidence Interval */}
+                
+
+                {/* Model Performance */}
+                {/* <div className="bg-white p-3 rounded-lg border border-amber-100">
+                  <h4 className="font-semibold text-amber-800 mb-2 text-sm">
+                    Model Performance:
+                  </h4>
+                  <div className="text-xs text-amber-700 space-y-1">
+                    <div>
+                      R² Score:{" "}
+                      {organicResult.model_performance.test_r2.toFixed(2)}
                     </div>
-                    <div className="w-full bg-gray-200 rounded-full h-2">
-                      <div
-                        className={`h-2 rounded-full ${getConfidenceColor(
-                          rec.confidence
-                        )}`}
-                        style={{ width: `${rec.confidence}%` }}
-                      ></div>
+                    <div>
+                      RMSE:{" "}
+                      {organicResult.model_performance.test_rmse.toFixed(2)}
+                    </div>
+                    <div>
+                      MAE: {organicResult.model_performance.test_mae.toFixed(2)}
                     </div>
                   </div>
-                ))}
-              </div>
-            </div>
+                </div> */}
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
 
-            {/* Input Parameters Used */}
-            <div className="border-t border-green-200 pt-4">
-              <h4 className="font-semibold text-green-800 mb-2">
-                Input Parameters Used:
-              </h4>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
-                <div className="text-green-700">
-                  <span className="font-medium">Nitrogen:</span>{" "}
-                  {result.input_parameters.nitrogen_percent}%
-                </div>
-                <div className="text-green-700">
-                  <span className="font-medium">Phosphorus:</span>{" "}
-                  {result.input_parameters.phosphorus_ppm} ppm
-                </div>
-                <div className="text-green-700">
-                  <span className="font-medium">pH:</span>{" "}
-                  {result.input_parameters.soil_ph}
-                </div>
-                <div className="text-green-700">
-                  <span className="font-medium">Potassium:</span>{" "}
-                  {result.input_parameters.potassium_meq_percent} meq%
-                </div>
-                <div className="text-green-700 md:col-span-2">
-                  <span className="font-medium">Crop:</span>{" "}
-                  {result.input_parameters.crop}
-                </div>
+      {/* Input Parameters Summary */}
+      {(result || organicResult) && (
+        <Card className="bg-gray-50/80 backdrop-blur-sm border-gray-200">
+          <CardHeader>
+            <CardTitle className="text-gray-800 text-lg">
+              Input Parameters Summary
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+              <div className="text-gray-700">
+                <span className="font-medium">Nitrogen:</span>{" "}
+                {formData.nitrogen}%
+              </div>
+              <div className="text-gray-700">
+                <span className="font-medium">Phosphorus:</span>{" "}
+                {formData.phosphorus} ppm
+              </div>
+              <div className="text-gray-700">
+                <span className="font-medium">pH:</span> {formData.soilPh}
+              </div>
+              <div className="text-gray-700">
+                <span className="font-medium">Potassium:</span>{" "}
+                {formData.potassium} meq%
+              </div>
+              <div className="text-gray-700 md:col-span-2">
+                <span className="font-medium">Crop:</span> {formData.crop}
               </div>
             </div>
           </CardContent>
